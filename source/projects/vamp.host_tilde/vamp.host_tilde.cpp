@@ -10,7 +10,7 @@
 #include <vamp-hostsdk/PluginLoader.h>
 
 using namespace c74::min;
-using namespace c74::min::lib;
+using namespace c74::min;
 using Vamp::Plugin;
 using Vamp::PluginHostAdapter;
 using Vamp::RealTime;
