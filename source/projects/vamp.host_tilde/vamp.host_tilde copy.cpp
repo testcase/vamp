@@ -138,6 +138,7 @@ public:
         MIN_FUNCTION {
             string plug = args[0];
             double sr = 48000.0;
+          
             PluginLoader *loader = PluginLoader::getInstance();
             //if can't get path assume plug does not exist and generate error.
             if(loader->getLibraryPathForPlugin(plug).size() == 0) {
@@ -160,8 +161,8 @@ public:
         
             m_plugin.reset(plugin);
             m_plugid = plug;
-            //cout << "ready to run plugin: \"" << plugin->getIdentifier() << "\"..." << endl;
             pluginfo.send("plug", m_plugid);
+
             return {};
         }
     };
@@ -249,7 +250,7 @@ public:
                 cerr << "no vamp plugins found" << endl;
             } else {
                 for (std::vector<PluginLoader::PluginKey>::iterator it = plugins.begin() ; it != plugins.end(); ++it) {
-                    pluginfo.send("plugins", *it);
+                    pluginfo.send("plug", *it);
                 }
             }
             
@@ -263,7 +264,8 @@ public:
             if(m_plugin) {
         
                 buffer_lock<false> b {m_buffer};
-                
+
+                //if buffer sample rate has changed we need to reload plugin and initialize
                 if(m_plugin->getInputSampleRate() != (float)b.samplerate()) {
                     PluginLoader *loader = PluginLoader::getInstance();
                     //if can't get path assume plug does not exist and generate error.
@@ -284,7 +286,7 @@ public:
                         //cout << "ready to run plugin: \"" << plugin->getIdentifier() << "\"..." << endl;
 
                 }
-
+                
                 
                 
                 int buffer_framecount = b.frame_count();
@@ -331,7 +333,7 @@ public:
                         feature_dict_indices[outputs[i].identifier] = 0;
                     }
 
-                    std::cout << "step " << step_size << "block " << real_block_size <<std::endl;
+                    
                     if (!m_plugin->initialise(channels, step_size, real_block_size)) {
                         cerr << "ERROR: Plugin initialise (channels = " << channels
                              << ", step_size = " << step_size << ", block_size = "
@@ -394,7 +396,7 @@ public:
                     }
 
                     
-                    analysis.send("dictionary", features_dict.name());
+                    pluginfo.send("features", "dictionary", features_dict.name());
                     
 
                     for(auto i=0;i<channels;i++) {
@@ -424,7 +426,7 @@ public:
     
 private:
     std::unique_ptr<Plugin> m_plugin { nullptr };
-    std::string m_plugid ;
+    std::string m_plugid { nullptr };
     
     void from_outputs(dict& output_dict) {
         vector<string> samp_type = {"one", "fixed", "variable"};
@@ -511,9 +513,9 @@ private:
                     for(std::vector<std::string>::iterator stit = valueNames.begin(); stit != valueNames.end(); ++stit) {
                         valuenames[j++] = *stit;
                     }
-                    outputdesc["valueNames"] = valuenames;
+
                 }
-                
+                outputdesc["valueNames"] = valuenames;
             }
 
             param_dict[desc.identifier] = outputdesc;
@@ -589,11 +591,6 @@ private:
             
         }
     }
-
-
 };
-
-
-
 
 MIN_EXTERNAL(vamp_host);

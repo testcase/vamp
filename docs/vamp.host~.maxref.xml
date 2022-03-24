@@ -39,14 +39,19 @@
 			<description>Process buffer through plugin </description>
 		</method>
 
-		<method name='getprograms'>
-			<digest>Get Programs </digest>
-			<description>Get Programs </description>
-		</method>
-
 		<method name='plug'>
 			<digest>Load plugin by name </digest>
 			<description>Load plugin by name </description>
+		</method>
+
+		<method name='getinfo'>
+			<digest>Get info </digest>
+			<description>Get info </description>
+		</method>
+
+		<method name='getprograms'>
+			<digest>Get Programs </digest>
+			<description>Get Programs </description>
 		</method>
 
 		<method name='plugins'>
@@ -59,11 +64,6 @@
 			<description>Get outputs </description>
 		</method>
 
-		<method name='getinfo'>
-			<digest>Get info </digest>
-			<description>Get info </description>
-		</method>
-
 		<method name='getparams'>
 			<digest>Get Params </digest>
 			<description>Get Params </description>
@@ -74,12 +74,27 @@
 			<description>Choose a named buffer~ from which to read. </description>
 		</method>
 
+		<method name='setparam'>
+			<digest>Set parameter </digest>
+			<description>Set parameter </description>
+		</method>
+
+		<method name='getparam'>
+			<digest>Get parameter </digest>
+			<description>Get parameter </description>
+		</method>
+
 	</methodlist>
 
 
 	<!--ATTRIBUTES-->
 
 	<attributelist>
+
+		<attribute name='block_size' get='1' set='1' type='long' size='1' >
+			<digest>Block size for processing</digest>
+			<description>Block size for processing. -1 means use whole buffer size </description>
+		</attribute>
 
 	</attributelist>
 
