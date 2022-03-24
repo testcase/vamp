@@ -254,36 +254,13 @@ public:
     message<> bang { this, "bang", "Process buffer through plugin",
         MIN_FUNCTION {
             if(m_plugin) {
-            
-                int block_size = m_plugin->getPreferredBlockSize();
-                int step_size = m_plugin->getPreferredStepSize();
-
-                if (block_size == 0) {
-                    block_size = 1024;
-                }
                 
-                if (step_size == 0) {
-                    if (m_plugin->getInputDomain() == Plugin::FrequencyDomain) {
-                        step_size = block_size/2;
-                    } else {
-                        step_size = block_size;
-                    }
-                } else if (step_size > block_size) {
-                    cerr << "WARNING: stepSize " << step_size << " > blockSize " << block_size << ", resetting blockSize to ";
-                    if (m_plugin->getInputDomain() == Plugin::FrequencyDomain) {
-                        block_size = step_size * 2;
-                    } else {
-                        block_size = step_size;
-                    }
-                    cerr << block_size << endl;
-                }
+                size_t  current_frame = 0;
                 
-                int overlap_size = block_size - step_size;
                 buffer_lock<false> b {m_buffer};
-                int finalStepsRemaining = MAX(1, (block_size / step_size) - 1);
                 int channels = b.channel_count();
-
-                float *bufferbuf = new float[block_size * channels];
+                int block_size = b.frame_count();
+                int step_size = block_size;
                 float **plugbuf = new float*[channels];
                 for(auto c = 0;c<channels;++c) {
                     plugbuf[c] = new float[block_size + 2];
@@ -297,18 +274,11 @@ public:
                     RealTime adjustment = RealTime::zeroTime;
                     Plugin::OutputList outputs = m_plugin->getOutputDescriptors();
                     Plugin::FeatureSet features;
-                    size_t current_step = 0;
-                    size_t current_pos = 0;
+   
                     std::map<std::string, dict> feature_dict_map;
                     std::map<std::string, size_t> features_dict_indices;
                     dict features_dict { symbol(true) };
                 
-                    std::cout << "Using block size = " << block_size << ", step size = " << step_size << std::endl;
-
-                    int minch = m_plugin->getMinChannelCount();
-                    int maxch = m_plugin->getMaxChannelCount();
-                    std::cout << "Plugin accepts " << minch << " -> " << maxch << " channel(s)" << std::endl;
-                    std::cout << "Sound file has " << channels << " (will mix/augment if necessary)" << std::endl;
 
                     if (outputs.empty()) {
                         cerr << "ERROR: Plugin has no outputs!" << endl;
@@ -336,54 +306,21 @@ public:
                         if (ida) adjustment = ida->getTimestampAdjustment();
                     }
                     
+                    
+                    
+                    
                     do {
-                        int count = 0;
                         
-                        if ((block_size==step_size) || (current_step==0)) {
-                            // read a full fresh block
-                            size_t remaining = b.frame_count() - current_pos;
-                            count = (remaining >= block_size) ? block_size : remaining;
-                            
-                            for(auto i=0;i<count*channels;i++) {
-                                bufferbuf[i] = b[i];
-                            }
-                            
-                            current_pos += count;
-                            if (count != block_size)
-                                --finalStepsRemaining;
-                        } else {
-                            //  otherwise shunt the existing data down and read the remainder.
-                            memmove(bufferbuf, bufferbuf + (step_size * channels), overlap_size * channels * sizeof(float));
-                            size_t remaining = b.frame_count() - current_pos;
-                            count = (remaining >= step_size) ? step_size : remaining;
-                            
-                            for(auto i=0;i<count*channels;i++) {
-                                bufferbuf[i] = b[i];
-                            }
-                            
-                            current_pos += count;
-                            
-                            if (count != step_size) {
-                                memset(bufferbuf + ((overlap_size + count) * channels), 0, (step_size - count) * channels * sizeof(float));
-                                --finalStepsRemaining;
-                            }
                         
-                            count += overlap_size;
-                        }
-                        
-                        for (int c = 0; c < channels; ++c) {
-                            int j = 0;
-                            while (j < count) {
-                                plugbuf[c][j] = bufferbuf[j * channels + c];
-                                ++j;
-                            }
-                            while (j < block_size) {
-                                plugbuf[c][j] = 0.0f;
-                                ++j;
+                        for (auto c = 0; c < channels; ++c) {
+                            for(auto j=0;j<block_size;j++) {
+                                plugbuf[c][j] = b.lookup(j , c);
                             }
                         }
                         
-                        rt = RealTime::frame2RealTime(current_step * step_size, b.samplerate());
+                
+                        
+                        rt = RealTime::frame2RealTime((current_frame/block_size), b.samplerate());
                         
                         features = m_plugin->process(plugbuf, rt);
                         
@@ -391,28 +328,28 @@ public:
                             from_features(feature_dict_map,features_dict_indices, features, RealTime::realTime2Frame(rt + adjustment, (int)b.samplerate()), (int)b.samplerate() );
 //                        }
                         
-                        current_step++;
+                        current_frame += block_size;
 
-                    } while (finalStepsRemaining > 0);
+                    } while ((b.frame_count() - current_frame) > block_size);
                     
                     
                     
-                    rt = RealTime::frame2RealTime(current_step * step_size, b.samplerate());
-
-                
+//                    rt = RealTime::frame2RealTime(current_step * step_size, b.samplerate());
+//
+//
 //                    if(!features.empty()) {
-                        from_features(feature_dict_map, features_dict_indices, features, RealTime::realTime2Frame(rt + adjustment, (int)b.samplerate()), (int)b.samplerate());
-                    //}
-                    
+//                        from_features(feature_dict_map, features_dict_indices, features, RealTime::realTime2Frame(rt + adjustment, (int)b.samplerate()), (int)b.samplerate());
+//                    }
+//
                     for(std::map<std::string, dict>::iterator it = feature_dict_map.begin(); it!=feature_dict_map.end();++it) {
                         std::string s = it->first;
                         features_dict[s] = it->second;
                     }
                     
-                    
+
                     pluginfo.send("features", "dictionary", features_dict.name());
                     
-                    delete[] bufferbuf;
+
                     for(auto i=0;i<channels;i++) {
                         delete plugbuf[i];
                     }
@@ -542,19 +479,18 @@ private:
                        int frame, int sr) {
 
         Plugin::OutputList outputs = m_plugin->getOutputDescriptors();
-
-    
+        
         for (Plugin::FeatureSet::iterator it = feature_set.begin() ; it != feature_set.end(); ++it) {
             Plugin::FeatureList flist = it->second;
             Plugin::OutputDescriptor desc = outputs[it->first];
             static int featureCount = -1;
             std::cout << desc.identifier << std::endl;
-           // dict feature_list_dict { symbol(true) }; //hold features associate with single output. treated as array
+
             dict feature_list_dict ( symbol(true));
             
-            //is there ever more than 1 entry in FeatureList?
+
             for(auto i=0;i<flist.size();i++) {
-                Plugin::Feature &f = flist[i];
+                const Plugin::Feature &f = flist[i];
                 RealTime rt;
                 bool haveRt = false;
                 dict feature_dict { symbol(true) };//hold individual feature in feature list
@@ -601,12 +537,12 @@ private:
                 
                 feature_dict["values"] = values_dict;
     
+
+                
                 feature_list_dict[i] = feature_dict;
             }
         
-            size_t index = features_dict_indices[desc.identifier];
-            feature_dict_map[desc.identifier][index] = feature_list_dict;
-            features_dict_indices[desc.identifier] = index + 1;
+            
         }
     }
 
