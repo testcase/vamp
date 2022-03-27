@@ -15,7 +15,6 @@
 *.so
 *.dylib
 *.dll
-*.mxo
 
 # Fortran module files
 *.mod
@@ -35,5 +34,8 @@
 # Mac Specific
 .DS_Store
 
+# Max
+*.mxo
+*.mxe64
+
 build/
-support/

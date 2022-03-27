@@ -39,6 +39,11 @@
 			<description>Process buffer through plugin </description>
 		</method>
 
+		<method name='plugins'>
+			<digest>List vamp plugins </digest>
+			<description>List vamp plugins </description>
+		</method>
+
 		<method name='plug'>
 			<digest>Load plugin by name </digest>
 			<description>Load plugin by name </description>
@@ -54,11 +59,6 @@
 			<description>Get Programs </description>
 		</method>
 
-		<method name='plugins'>
-			<digest>List vamp plugins </digest>
-			<description>List vamp plugins </description>
-		</method>
-
 		<method name='getoutputs'>
 			<digest>Get outputs </digest>
 			<description>Get outputs </description>
@@ -67,6 +67,11 @@
 		<method name='getparams'>
 			<digest>Get Params </digest>
 			<description>Get Params </description>
+		</method>
+
+		<method name='getparam'>
+			<digest>Get parameter </digest>
+			<description>Get parameter </description>
 		</method>
 
 		<method name='set'>
@@ -79,9 +84,9 @@
 			<description>Set parameter </description>
 		</method>
 
-		<method name='getparam'>
-			<digest>Get parameter </digest>
-			<description>Get parameter </description>
+		<method name='summary'>
+			<digest>Get summary of features </digest>
+			<description>Get summary of features </description>
 		</method>
 
 	</methodlist>
@@ -90,6 +95,11 @@
 	<!--ATTRIBUTES-->
 
 	<attributelist>
+
+		<attribute name='enable_summary' get='1' set='1' type='long' size='1' >
+			<digest>Enable statistical summary of features </digest>
+			<description>Enable statistical summary of features </description>
+		</attribute>
 
 		<attribute name='block_size' get='1' set='1' type='long' size='1' >
 			<digest>Block size for processing</digest>

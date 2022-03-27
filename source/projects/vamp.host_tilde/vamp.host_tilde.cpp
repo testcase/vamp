@@ -7,7 +7,9 @@
 #include "c74_min.h"
 #include <vamp-hostsdk/PluginHostAdapter.h>
 #include <vamp-hostsdk/PluginInputDomainAdapter.h>
+#include <vamp-hostsdk/PluginSummarisingAdapter.h>
 #include <vamp-hostsdk/PluginLoader.h>
+#include "running_stats.h"
 
 using namespace c74::min;
 using namespace c74::min;
@@ -17,8 +19,11 @@ using Vamp::RealTime;
 using Vamp::HostExt::PluginLoader;
 using Vamp::HostExt::PluginWrapper;
 using Vamp::HostExt::PluginInputDomainAdapter;
+using Vamp::HostExt::PluginSummarisingAdapter;
 static double
 toSeconds(const RealTime &time);
+
+#define IS_NUMBER(x) ((x.type() == message_type::float_argument) || (x.type() == message_type::int_argument))
 
 
 static double
@@ -63,6 +68,54 @@ public:
         description {
             "Block size for processing. -1 means use whole buffer size"
         }
+    };
+    
+    attribute<bool> enable_summary { this, "enable_summary", true,
+        description {
+            "Enable statistical summary of features"
+        }
+    };
+    
+    attribute<double> step_delta {this, "step_delta", .001,
+        
+        description {
+            "For stats"
+        }
+    };
+    
+    
+
+    message<> summary {this, "summary", "Get summary of features",
+        
+        MIN_FUNCTION {
+            
+            if(m_feature_vec.empty()) {
+                cerr << "no features to summarize" << endl;
+                return {};
+            }
+            
+            if(args.size() == 0) {
+                stats_buffer();
+            } else if(args.size() == 1) {
+                return {}; // do i want to do anythin?; //yes check if dict
+                
+            } else if (args.size() == 2) {
+                if( !(IS_NUMBER(args[0]) && IS_NUMBER(args[1])) ) {
+                    cerr << "not numbers";
+                    return {};
+                }
+                
+                double start = args[0];
+                double end = args[1];
+                stats_range(start, end);
+                
+            }
+
+   
+            return {};
+        }
+        
+        
     };
     
     message<> setparam {this, "setparam", "Set parameter",
@@ -157,8 +210,10 @@ public:
                 cerr << "failed to load plugin for some reason" << endl;
                 return {};
             }
-        
+
             m_plugin.reset(plugin);
+        
+
             m_plugid = plug;
             //cout << "ready to run plugin: \"" << plugin->getIdentifier() << "\"..." << endl;
             pluginfo.send("plug", m_plugid);
@@ -279,14 +334,14 @@ public:
                         cerr << "failed to load plugin for some reason" << endl;
                         return {};
                     }
+                    
+
 
                     m_plugin.reset(plugin);
                         //cout << "ready to run plugin: \"" << plugin->getIdentifier() << "\"..." << endl;
 
                 }
 
-                
-                
                 int buffer_framecount = b.frame_count();
                 int channels = b.channel_count();
                 int real_block_size = block_size;
@@ -306,6 +361,8 @@ public:
                 
                 
                 size_t current_block = 0;
+                
+                m_feature_vec.clear();
 
                 if(b.valid()) {
                     
@@ -348,6 +405,8 @@ public:
                         if (ida) adjustment = ida->getTimestampAdjustment();
                     }
                     
+                   
+                    
                 
                     do {
                         for (auto c = 0; c < channels; ++c) {
@@ -361,10 +420,11 @@ public:
                             
                         features = m_plugin->process(plugbuf, rt);
 
-                        from_features(feature_dict_map,
-                                      feature_dict_indices,
-                                      features, RealTime::realTime2Frame(rt + adjustment, (int)b.samplerate()),
-                                      (int)b.samplerate() );
+                        if(enable_summary) {
+                            from_features_summarize(feature_dict_map, feature_dict_indices,m_feature_vec,features, RealTime::realTime2Frame(rt + adjustment, (int)b.samplerate()), (int)b.samplerate() );
+                        } else {
+                            from_features(feature_dict_map, feature_dict_indices, features, RealTime::realTime2Frame(rt + adjustment, (int)b.samplerate()), (int)b.samplerate() );
+                        }
                                                     
                         current_block++;
                         
@@ -385,7 +445,12 @@ public:
                     
                     features = m_plugin->getRemainingFeatures();
                     if(!features.empty()) {
-                        from_features(feature_dict_map, feature_dict_indices, features, RealTime::realTime2Frame(rt + adjustment, (int)b.samplerate()), (int)b.samplerate() );
+                        if(enable_summary) {
+                            from_features_summarize(feature_dict_map, feature_dict_indices,m_feature_vec,features, RealTime::realTime2Frame(rt + adjustment, (int)b.samplerate()), (int)b.samplerate() );
+                        } else {
+                            from_features(feature_dict_map, feature_dict_indices, features, RealTime::realTime2Frame(rt + adjustment, (int)b.samplerate()), (int)b.samplerate() );
+                        }
+                        
                     }
                     
                     for(std::map<std::string, dict>::iterator it = feature_dict_map.begin(); it!=feature_dict_map.end();++it) {
@@ -396,7 +461,9 @@ public:
                     
                     analysis.send("dictionary", features_dict.name());
                     
+                    
 
+                    
                     for(auto i=0;i<channels;i++) {
                         delete plugbuf[i];
                     }
@@ -425,9 +492,11 @@ public:
 private:
     std::unique_ptr<Plugin> m_plugin { nullptr };
     std::string m_plugid ;
+    std::map<std::string, std::vector<Plugin::Feature>> m_feature_vec;
+    
     
     void from_outputs(dict& output_dict) {
-        vector<string> samp_type = {"one", "fixed", "variable"};
+        std::vector<std::string> samp_type = {"one-sample-per-step", "fixed", "variable"};
 
         Plugin::OutputList outputs = m_plugin->getOutputDescriptors();
 
@@ -476,7 +545,7 @@ private:
             }
 
 
-            outputdesc_dict["sampleType"] = desc.sampleType;
+            outputdesc_dict["sampleType"] = samp_type[desc.sampleType];
             outputdesc_dict["sampleRate"] = desc.sampleRate;
             outputdesc_dict["hasDuration"] =  desc.hasDuration;
 
@@ -584,12 +653,284 @@ private:
                 feature_dict_indices[desc.identifier] = pos + 1;
 
             }
-            
-        
-            
         }
     }
+    
+    void from_features_summarize(std::map<std::string, dict>& feature_dict_map,
+                                 std::map<std::string, size_t>& feature_dict_indices,
+                                 std::map<std::string, std::vector<Plugin::Feature>>& feature_vec,
+                                 Plugin::FeatureSet& feature_set,
+                                 int frame, int sr) {
 
+        Plugin::OutputList outputs = m_plugin->getOutputDescriptors();
+        
+        for (Plugin::FeatureSet::iterator it = feature_set.begin() ; it != feature_set.end(); ++it) {
+            Plugin::FeatureList flist = it->second;
+            Plugin::OutputDescriptor desc = outputs[it->first];
+           
+            for(auto i=0;i<flist.size();i++) {
+                Plugin::Feature &f = flist[i];
+                static int featureCount = -1;
+                RealTime rt;
+                bool haveRt = false;
+                dict feature_dict { symbol(true) };//hold individual feature in feature list
+
+                if (desc.sampleType == Plugin::OutputDescriptor::VariableSampleRate) {
+                    rt = f.timestamp;
+                    haveRt = true;
+                } else if (desc.sampleType == Plugin::OutputDescriptor::FixedSampleRate) {
+                    int n = featureCount + 1;
+                    if (f.hasTimestamp) {
+                        n = int(round(toSeconds(f.timestamp) * desc.sampleRate));
+                    }
+                    rt = RealTime::fromSeconds(double(n) / desc.sampleRate);
+                    haveRt = true;
+                    featureCount = n;
+                }
+    
+                if (!haveRt) {
+                    rt = RealTime::frame2RealTime(frame, sr);
+                }
+        
+                feature_dict["timestamp"] = std::stod(rt.toString());
+                //adjust feature timestamp to computed
+                f.timestamp = rt;
+        
+                feature_dict["hasDuration"] = f.hasDuration;
+                
+                if (f.hasDuration) {
+                    rt = f.duration;
+                    feature_dict["duration"] = std::stod(rt.toString());
+    
+                }
+                
+                if(f.label.size() > 0) {
+                    feature_dict["label"] = f.label;//is this ever not blank?
+                }
+        
+                dict values_dict { symbol(true) };
+                std::vector<float> values = f.values;
+                int v = 0;
+                for(std::vector<float>::iterator vit = values.begin();vit != values.end();++vit) {
+                    values_dict[v++] = *vit;
+                }
+                
+                feature_dict["values"] = values_dict;
+
+                size_t pos = feature_dict_indices[desc.identifier];
+                feature_dict_map[desc.identifier][pos] = feature_dict;
+                feature_dict_indices[desc.identifier] = pos + 1;
+                feature_vec[desc.identifier].push_back(f);
+
+            }
+        }
+    }
+    
+    void stats_buffer() {
+        
+        Plugin::OutputList outputs = m_plugin->getOutputDescriptors();
+        buffer_lock<false> b {m_buffer};
+        
+        for(auto i=0;i<outputs.size();i++) {
+            Plugin::OutputDescriptor desc = outputs[i];
+            std::string id = desc.identifier;
+            if(desc.binCount == 1) {
+                std::vector<Plugin::Feature> features = m_feature_vec[id];
+                running_stats<float> stats;
+                // this is more complicated than it first appears.
+                // i don't want to fiddle around with durations and calculating different segments
+                // so going to pretend that the feature is sampled at fixed rate even if it is not to get stats
+                if (desc.sampleType == Plugin::OutputDescriptor::VariableSampleRate) {
+                    
+                    
+                    std::vector<Plugin::Feature>::iterator fi = features.begin();
+                    // get first timestamp in features
+                    Plugin::Feature first = *fi;
+                    double start_time = std::stod(first.timestamp.toString());//LOL
+                    
+                    for(double tstep=start_time;tstep<b.length_in_seconds();tstep+=step_delta) {
+                        RealTime rt = RealTime::fromSeconds(tstep);
+                        Plugin::Feature f = *fi;
+                        if(rt <= f.timestamp) {
+                            stats.add(f.values[0]);
+                        } else {
+                            ++fi;
+                            if(fi == features.end()){
+                                if(tstep<b.length_in_seconds()) {
+                                    --fi;
+                                    continue;
+                                } else {
+                                    break;
+                                }
+                            }
+                            f = *fi;
+                            stats.add(f.values[0]);
+                        }
+                    }
+                    
+                    std::cout << id;
+                    try {
+                        std::cout << "  mean: " << stats.mean() << std::endl;
+                    } catch(const std::out_of_range& e) {}
+                    try {
+                        std::cout << "  min: " << stats.min() << std::endl;
+                    }catch(const std::out_of_range& e) {}
+                    try {
+                        std::cout << "  max: " << stats.max() << std::endl;
+                    } catch(const std::out_of_range& e) {}
+                    try {
+                        std::cout << "  var: " << stats.variance() << std::endl;
+                    } catch(const std::out_of_range& e) {}
+                    try {
+                        std::cout << "  stddev: " << stats.stddev() << std::endl;
+                    } catch(const std::out_of_range& e) {}
+                    try {
+                        std::cout << "  skewness: " << stats.skewness() << std::endl;
+                    } catch(const std::out_of_range& e) {}
+                    try {
+                        std::cout << "  kurtosis: " << stats.ex_kurtosis() << std::endl;
+                    } catch(const std::out_of_range& e) {}
+                    std::cout << std::endl;
+                   
+                } else if (desc.sampleType == Plugin::OutputDescriptor::FixedSampleRate) {
+                    running_stats<float> stats;
+                    for(auto& x : features) {
+                        stats.add(x.values[0]);
+                    }
+                    std::cout << id;
+                    try {
+                        std::cout << "  mean: " << stats.mean() << std::endl;
+                    } catch(const std::out_of_range& e) {}
+                    try {
+                        std::cout << "  min: " << stats.min() << std::endl;
+                    }catch(const std::out_of_range& e) {}
+                    try {
+                        std::cout << "  max: " << stats.max() << std::endl;
+                    } catch(const std::out_of_range& e) {}
+                    try {
+                        std::cout << "  var: " << stats.variance() << std::endl;
+                    } catch(const std::out_of_range& e) {}
+                    try {
+                        std::cout << "  stddev: " << stats.stddev() << std::endl;
+                    } catch(const std::out_of_range& e) {}
+                    try {
+                        std::cout << "  skewness: " << stats.skewness() << std::endl;
+                    } catch(const std::out_of_range& e) {}
+                    try {
+                        std::cout << "  kurtosis: " << stats.ex_kurtosis() << std::endl;
+                    } catch(const std::out_of_range& e) {}
+                    std::cout << std::endl;
+                }
+                    
+            }
+            
+            
+        }
+        
+    }
+    
+    void stats_range(double start, double end) {
+        Plugin::OutputList outputs = m_plugin->getOutputDescriptors();
+        buffer_lock<false> b {m_buffer};
+        
+        if(end <= start ) {
+            cerr << " send must be later than start"<< endl;
+            return;
+        }
+        
+        if(start >=  b.length_in_seconds()) {
+            cerr << " start must be before end of buffer" << endl;
+            return;
+        }
+        
+        double start_time = start;
+        double end_time = end;
+        
+        if(end_time > b.length_in_seconds()) {
+            end_time = b.length_in_seconds();
+        }
+        
+        for(auto i=0;i<outputs.size();i++) {
+            Plugin::OutputDescriptor desc = outputs[i];
+            std::string id = desc.identifier;
+            // not going to summarize features with mulitple values
+            if(desc.binCount == 1) {
+                std::vector<Plugin::Feature> features = m_feature_vec[id];
+                running_stats<float> stats;
+            // this is more complicated than it first appears.
+            // i don't want to fiddle around with durations and calculating different segments
+            // so going to pretend that the feature is sampled at fixed rate even if it is not to get stats
+                if(features.size() == 1) {
+                    stats.add(features[0].values[0]);
+                } else {
+                    std::vector<Plugin::Feature>::iterator fi = features.begin();
+                    
+                    Plugin::Feature first = *fi++;
+               
+                    if(first.timestamp == RealTime::fromSeconds(0.0)) {
+                        ;// do nothing // std::cout << "first " << first.timestamp.toString() << std::endl;
+                    } else {
+                        //find first time stamp after start time
+                        while(first.timestamp < RealTime::fromSeconds(start_time) ) {
+                            *fi++;
+                        }
+                        //decrement to start at previous feature
+                        *fi--;
+                    }
+                        
+                    
+                    
+                    for(double tstep=start_time;tstep<end_time;tstep+=step_delta) {
+                        RealTime rt = RealTime::fromSeconds(tstep);
+                        Plugin::Feature f = *fi;
+                        if(rt <= f.timestamp) {
+                            stats.add(f.values[0]);
+                        } else {
+                            ++fi;
+                            if(fi == features.end()){
+                                if(tstep<b.length_in_seconds() && fi!=features.end()) {
+                                    --fi;
+                                    continue;
+                                } else {
+                                    break;
+                                }
+                            }
+                            f = *fi;
+                            stats.add(f.values[0]);
+                        }
+                    }
+                }
+                std::cout << id;
+                
+                std::cout << "  n: " << stats.current_n() << std::endl;
+                try {
+                    std::cout << "  mean: " << stats.mean() << std::endl;
+                } catch(const std::out_of_range& e) {}
+                try {
+                    std::cout << "  min: " << stats.min() << std::endl;
+                }catch(const std::out_of_range& e) {}
+                try {
+                    std::cout << "  max: " << stats.max() << std::endl;
+                } catch(const std::out_of_range& e) {}
+                try {
+                    std::cout << "  var: " << stats.variance() << std::endl;
+                } catch(const std::out_of_range& e) {}
+                try {
+                    std::cout << "  stddev: " << stats.stddev() << std::endl;
+                } catch(const std::out_of_range& e) {}
+                try {
+                    std::cout << "  skewness: " << stats.skewness() << std::endl;
+                } catch(const std::out_of_range& e) {}
+                try {
+                    std::cout << "  kurtosis: " << stats.ex_kurtosis() << std::endl;
+                } catch(const std::out_of_range& e) {}
+                std::cout << std::endl;
+            
+            }
+        
+        }
+    }
+    
 
 };
 
