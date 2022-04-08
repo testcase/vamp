@@ -9,9 +9,9 @@
 #include <vamp-hostsdk/PluginInputDomainAdapter.h>
 #include <vamp-hostsdk/PluginSummarisingAdapter.h>
 #include <vamp-hostsdk/PluginLoader.h>
+#include <algorithm>
 #include "running_stats.h"
 
-using namespace c74::min;
 using namespace c74::min;
 using Vamp::Plugin;
 using Vamp::PluginHostAdapter;
@@ -24,7 +24,6 @@ static double
 toSeconds(const RealTime &time);
 
 #define IS_NUMBER(x) ((x.type() == message_type::float_argument) || (x.type() == message_type::int_argument))
-
 
 static double
 toSeconds(const RealTime &time)
@@ -54,7 +53,16 @@ public:
     
     argument<symbol> m_name_arg {this, "buffer-name", "Initial buffer~ from which to read.",
         MIN_ARGUMENT_FUNCTION {
+            
             m_buffer.set(arg);
+            
+        } 
+    };
+    
+    argument<symbol> m_plug_arg {this, "plug-name", "Initial plug-in to load.",
+        MIN_ARGUMENT_FUNCTION {
+            //load_plug(arg);
+            plug(arg);
         }
     };
     
@@ -83,6 +91,89 @@ public:
         }
     };
     
+    message<> dictionary { this, "dictionary",
+        MIN_FUNCTION {
+            c74::max::t_max_err err = c74::max::MAX_ERR_NONE;
+
+            dict d { args[0] };
+            
+            dict summary_dict { symbol(true) };
+            
+            buffer_lock<false> b {m_buffer};
+            
+            c74::max::t_object* s = static_cast<c74::max::t_object*>(d);
+            c74::max::t_dictionary* max_dict  = (c74::max::t_dictionary*)s;
+
+            long numkeys = 0;
+            c74::max::t_symbol **keys = NULL;
+            
+            err = c74::max::dictionary_getkeys_ordered( max_dict, &numkeys, &keys);
+            
+            if(err !=  c74::max::MAX_ERR_NONE) {
+                cerr << "error parsing dictionary" << endl;
+                goto out;
+            }
+            
+            for(auto i=0; i<numkeys; i++){
+                
+                dict query_dict ;
+                dict stats_dict { symbol(true) };
+                double start = 0.0;
+                double end = 0.0;
+                
+                try {
+                    query_dict = dict(static_cast<atom>(d[keys[i]]));
+                    
+                } catch (std::runtime_error& e) {
+                    cerr << e.what() << endl;
+                    return {};
+                }
+               
+    
+                try {
+                    atom timestamp = query_dict.at("timestamp");
+                    if(!IS_NUMBER(timestamp)) {
+                        cerr << "timestamp must be a number" << endl;
+                        goto out;
+                    }
+                    start = float(timestamp);
+                    
+                } catch (std::runtime_error& e) {
+                    cerr << e.what() << endl;
+                }
+                
+                try {
+                    atom duration = query_dict.at("duration");
+                    if(!IS_NUMBER(duration)) {
+                        cerr << "duration must be a number" << endl;
+                        goto out;
+                    }
+                    if(float(duration) == 0.0){
+                        end = b.length_in_seconds();
+                    } else {
+                        end = start + float(duration);
+                    }
+                } catch (std::runtime_error& e) {
+                    cerr << e.what() << endl;
+                }
+                
+                stats_range(stats_dict, start, end);
+                summary_dict[keys[i]] = stats_dict;
+            }
+            
+            
+            out:
+            if(keys) {
+                c74::max::dictionary_freekeys(max_dict, numkeys, keys);
+            }
+            
+            
+            pluginfo.send("summary", "dictionary",summary_dict.name());
+            
+            return {};
+
+        }
+    };
     
 
     message<> summary {this, "summary", "Get summary of features",
@@ -93,25 +184,34 @@ public:
                 cerr << "no features to summarize" << endl;
                 return {};
             }
-            
+            dict summary_dict { symbol(true) };
+            dict stats_dict { symbol(true) };
+            buffer_lock<false> b {m_buffer};
+    
             if(args.size() == 0) {
-                stats_buffer();
-            } else if(args.size() == 1) {
-                return {}; // do i want to do anythin?; //yes check if dict
+                stats_buffer(stats_dict);
+                summary_dict[0] = stats_dict;
+            } else if ( (args.size() % 2) == 0) {
                 
-            } else if (args.size() == 2) {
-                if( !(IS_NUMBER(args[0]) && IS_NUMBER(args[1])) ) {
-                    cerr << "not numbers";
+                if (!std::all_of(args.cbegin(), args.cend(), [](auto x){ return (x.type() == message_type::float_argument) || (x.type() == message_type::int_argument); })) {
+                    cerr << "all arguments to summary should be numbers" << endl;
                     return {};
                 }
                 
-                double start = args[0];
-                double end = args[1];
-                stats_range(start, end);
+                for(auto i=0;i<args.size();i+=2) {
+                    double start = args[i];
+                    double end = args[i+1];
+                    stats_range(stats_dict, start, end);
+                    summary_dict[i/2] = stats_dict;
+                }
+            
+            } else {
+                cerr << "args to summary should be pairs of start and end points";
                 
             }
-
-   
+            
+            pluginfo.send("summary", "dictionary",summary_dict.name());
+            
             return {};
         }
         
@@ -190,33 +290,13 @@ public:
     message<> plug {this, "plug", "Load plugin by name",
         MIN_FUNCTION {
             string plug = args[0];
-            double sr = 48000.0;
-            PluginLoader *loader = PluginLoader::getInstance();
-            //if can't get path assume plug does not exist and generate error.
-            if(loader->getLibraryPathForPlugin(plug).size() == 0) {
-                cerr << "vamp plugin does not exist or can't be found" << endl;
-                return {};
-            }
             
-            buffer_lock<false> b {m_buffer};
+            load_plug(plug);
 
-            if(b.valid()) {
-                sr = b.samplerate();
-            }
-            
-            Plugin *plugin = loader->loadPlugin(plug, sr, PluginLoader::AdapterFlags::ADAPT_ALL);
-            
-            if(!plugin) {
-                cerr << "failed to load plugin for some reason" << endl;
-                return {};
-            }
-
-            m_plugin.reset(plugin);
-        
-
-            m_plugid = plug;
-            //cout << "ready to run plugin: \"" << plugin->getIdentifier() << "\"..." << endl;
             pluginfo.send("plug", m_plugid);
+            
+            getinfo();
+            
             return {};
         }
     };
@@ -327,7 +407,6 @@ public:
                         return {};
                     }
 
-
                     Plugin *plugin = loader->loadPlugin(m_plugid, b.samplerate(), PluginLoader::AdapterFlags::ADAPT_ALL);
 
                     if(!plugin) {
@@ -335,11 +414,7 @@ public:
                         return {};
                     }
                     
-
-
                     m_plugin.reset(plugin);
-                        //cout << "ready to run plugin: \"" << plugin->getIdentifier() << "\"..." << endl;
-
                 }
 
                 int buffer_framecount = b.frame_count();
@@ -358,7 +433,6 @@ public:
                 for(auto c = 0;c<channels;++c) {
                     plugbuf[c] = new float[real_block_size + 2];
                 }
-                
                 
                 size_t current_block = 0;
                 
@@ -388,7 +462,6 @@ public:
                         feature_dict_indices[outputs[i].identifier] = 0;
                     }
 
-                    std::cout << "step " << step_size << "block " << real_block_size <<std::endl;
                     if (!m_plugin->initialise(channels, step_size, real_block_size)) {
                         cerr << "ERROR: Plugin initialise (channels = " << channels
                              << ", step_size = " << step_size << ", block_size = "
@@ -404,10 +477,7 @@ public:
                             wrapper->getWrapper<PluginInputDomainAdapter>();
                         if (ida) adjustment = ida->getTimestampAdjustment();
                     }
-                    
-                   
-                    
-                
+
                     do {
                         for (auto c = 0; c < channels; ++c) {
                             size_t pos = current_block*real_block_size;
@@ -461,9 +531,6 @@ public:
                     
                     analysis.send("dictionary", features_dict.name());
                     
-                    
-
-                    
                     for(auto i=0;i<channels;i++) {
                         delete plugbuf[i];
                     }
@@ -493,6 +560,38 @@ private:
     std::unique_ptr<Plugin> m_plugin { nullptr };
     std::string m_plugid ;
     std::map<std::string, std::vector<Plugin::Feature>> m_feature_vec;
+    
+    void load_plug (std::string plugname) {
+            double sr = 48000.0;
+            PluginLoader *loader = PluginLoader::getInstance();
+            //if can't get path assume plug does not exist and generate error.
+            if(loader->getLibraryPathForPlugin(plugname).size() == 0) {
+                cerr << "vamp plugin does not exist or can't be found" << endl;
+                return;
+            }
+            
+            buffer_lock<false> b {m_buffer};
+
+            if(b.valid()) {
+                sr = b.samplerate();
+            }
+            
+            Plugin *plugin = loader->loadPlugin(plugname, sr, PluginLoader::AdapterFlags::ADAPT_ALL);
+            
+            if(!plugin) {
+                cerr << "failed to load plugin for some reason" << endl;
+                return;
+            }
+
+            m_plugin.reset(plugin);
+        
+
+            m_plugid = plugname;
+
+            
+            return;
+    }
+ 
     
     
     void from_outputs(dict& output_dict) {
@@ -726,10 +825,13 @@ private:
         }
     }
     
-    void stats_buffer() {
+    void stats_buffer(dict& summary_dict) {
         
         Plugin::OutputList outputs = m_plugin->getOutputDescriptors();
         buffer_lock<false> b {m_buffer};
+        
+        summary_dict["timestamp"] = 0.0;
+        summary_dict["duration"] = b.length_in_seconds();
         
         for(auto i=0;i<outputs.size();i++) {
             Plugin::OutputDescriptor desc = outputs[i];
@@ -737,11 +839,11 @@ private:
             if(desc.binCount == 1) {
                 std::vector<Plugin::Feature> features = m_feature_vec[id];
                 running_stats<float> stats;
+                dict stats_dict { symbol(true) };
                 // this is more complicated than it first appears.
                 // i don't want to fiddle around with durations and calculating different segments
                 // so going to pretend that the feature is sampled at fixed rate even if it is not to get stats
                 if (desc.sampleType == Plugin::OutputDescriptor::VariableSampleRate) {
-                    
                     
                     std::vector<Plugin::Feature>::iterator fi = features.begin();
                     // get first timestamp in features
@@ -751,85 +853,82 @@ private:
                     for(double tstep=start_time;tstep<b.length_in_seconds();tstep+=step_delta) {
                         RealTime rt = RealTime::fromSeconds(tstep);
                         Plugin::Feature f = *fi;
-                        if(rt <= f.timestamp) {
+                        Plugin::Feature f2 = *fi;
+                        std::vector<Plugin::Feature>::iterator peek = fi;
+                        if(++peek != features.end()) {
+                            f2 = *peek;
+                        } else {
+                            f2 = f;
+                        }
+
+                        if(rt <= f2.timestamp) {
                             stats.add(f.values[0]);
                         } else {
-                            ++fi;
+                            fi++;
+                            stats.add(f2.values[0]);
                             if(fi == features.end()){
-                                if(tstep<b.length_in_seconds()) {
-                                    --fi;
+                                if(tstep<b.length_in_seconds() && fi!=features.end()) {
+                                    fi--;
                                     continue;
                                 } else {
                                     break;
                                 }
                             }
-                            f = *fi;
-                            stats.add(f.values[0]);
                         }
                     }
-                    
-                    std::cout << id;
+                   
                     try {
-                        std::cout << "  mean: " << stats.mean() << std::endl;
-                    } catch(const std::out_of_range& e) {}
-                    try {
-                        std::cout << "  min: " << stats.min() << std::endl;
+                        stats_dict["min"] = stats.min();
                     }catch(const std::out_of_range& e) {}
                     try {
-                        std::cout << "  max: " << stats.max() << std::endl;
+                        stats_dict["max"] = stats.max();
                     } catch(const std::out_of_range& e) {}
                     try {
-                        std::cout << "  var: " << stats.variance() << std::endl;
+                        stats_dict["variance"] = stats.variance();
                     } catch(const std::out_of_range& e) {}
                     try {
-                        std::cout << "  stddev: " << stats.stddev() << std::endl;
+                        stats_dict["stddev"] = stats.stddev();
                     } catch(const std::out_of_range& e) {}
                     try {
-                        std::cout << "  skewness: " << stats.skewness() << std::endl;
+                        stats_dict["skewness"] = stats.skewness() ;
                     } catch(const std::out_of_range& e) {}
                     try {
-                        std::cout << "  kurtosis: " << stats.ex_kurtosis() << std::endl;
+                        stats_dict["kurtosis"] = stats.ex_kurtosis() ;
                     } catch(const std::out_of_range& e) {}
-                    std::cout << std::endl;
                    
                 } else if (desc.sampleType == Plugin::OutputDescriptor::FixedSampleRate) {
                     running_stats<float> stats;
                     for(auto& x : features) {
                         stats.add(x.values[0]);
                     }
-                    std::cout << id;
+                    
                     try {
-                        std::cout << "  mean: " << stats.mean() << std::endl;
-                    } catch(const std::out_of_range& e) {}
-                    try {
-                        std::cout << "  min: " << stats.min() << std::endl;
+                        stats_dict["min"] = stats.min();
                     }catch(const std::out_of_range& e) {}
                     try {
-                        std::cout << "  max: " << stats.max() << std::endl;
+                        stats_dict["max"] = stats.max();
                     } catch(const std::out_of_range& e) {}
                     try {
-                        std::cout << "  var: " << stats.variance() << std::endl;
+                        stats_dict["variance"] = stats.variance();
                     } catch(const std::out_of_range& e) {}
                     try {
-                        std::cout << "  stddev: " << stats.stddev() << std::endl;
+                        stats_dict["stddev"] = stats.stddev();
                     } catch(const std::out_of_range& e) {}
                     try {
-                        std::cout << "  skewness: " << stats.skewness() << std::endl;
+                        stats_dict["skewness"] = stats.skewness() ;
                     } catch(const std::out_of_range& e) {}
                     try {
-                        std::cout << "  kurtosis: " << stats.ex_kurtosis() << std::endl;
+                        stats_dict["kurtosis"] = stats.ex_kurtosis() ;
                     } catch(const std::out_of_range& e) {}
-                    std::cout << std::endl;
-                }
                     
+                }
+                
+                summary_dict[id] = stats_dict;
             }
-            
-            
         }
-        
     }
     
-    void stats_range(double start, double end) {
+    void stats_range(dict& summary_dict, double start, double end) {
         Plugin::OutputList outputs = m_plugin->getOutputDescriptors();
         buffer_lock<false> b {m_buffer};
         
@@ -850,6 +949,9 @@ private:
             end_time = b.length_in_seconds();
         }
         
+        summary_dict["timestamp"] = start_time;
+        summary_dict["duration"] = end_time - start_time;
+        
         for(auto i=0;i<outputs.size();i++) {
             Plugin::OutputDescriptor desc = outputs[i];
             std::string id = desc.identifier;
@@ -857,6 +959,7 @@ private:
             if(desc.binCount == 1) {
                 std::vector<Plugin::Feature> features = m_feature_vec[id];
                 running_stats<float> stats;
+                dict stats_dict { symbol(true) };
             // this is more complicated than it first appears.
             // i don't want to fiddle around with durations and calculating different segments
             // so going to pretend that the feature is sampled at fixed rate even if it is not to get stats
@@ -865,68 +968,74 @@ private:
                 } else {
                     std::vector<Plugin::Feature>::iterator fi = features.begin();
                     
-                    Plugin::Feature first = *fi++;
+                    Plugin::Feature first = *fi;
                
-                    if(first.timestamp == RealTime::fromSeconds(0.0)) {
-                        ;// do nothing // std::cout << "first " << first.timestamp.toString() << std::endl;
+                    if( (first.timestamp == RealTime::fromSeconds(0.0)) && (start_time == 0.0)) {
+                        ;
+                    } else if (RealTime::fromSeconds(start_time) < first.timestamp){
+                        ;
+                        
+                        
                     } else {
                         //find first time stamp after start time
-                        while(first.timestamp < RealTime::fromSeconds(start_time) ) {
-                            *fi++;
+                        while(first.timestamp <= RealTime::fromSeconds(start_time) ) {
+                            fi++;
+                            first = *fi;
                         }
                         //decrement to start at previous feature
-                        *fi--;
+                        fi--;
+              
                     }
-                        
-                    
                     
                     for(double tstep=start_time;tstep<end_time;tstep+=step_delta) {
                         RealTime rt = RealTime::fromSeconds(tstep);
                         Plugin::Feature f = *fi;
-                        if(rt <= f.timestamp) {
+                        Plugin::Feature f2 = *fi;
+                        std::vector<Plugin::Feature>::iterator peek = fi;
+                        if(++peek != features.end()) {
+                            f2 = *peek;
+                        } else {
+                            f2 = f;
+                        }
+
+                        if(rt <= f2.timestamp) {
                             stats.add(f.values[0]);
                         } else {
-                            ++fi;
+                            fi++;
+                            stats.add(f2.values[0]);
                             if(fi == features.end()){
                                 if(tstep<b.length_in_seconds() && fi!=features.end()) {
-                                    --fi;
+                                    fi--;
                                     continue;
                                 } else {
                                     break;
                                 }
                             }
-                            f = *fi;
-                            stats.add(f.values[0]);
                         }
                     }
                 }
-                std::cout << id;
-                
-                std::cout << "  n: " << stats.current_n() << std::endl;
                 try {
-                    std::cout << "  mean: " << stats.mean() << std::endl;
-                } catch(const std::out_of_range& e) {}
-                try {
-                    std::cout << "  min: " << stats.min() << std::endl;
+                    stats_dict["min"] = stats.min();
                 }catch(const std::out_of_range& e) {}
                 try {
-                    std::cout << "  max: " << stats.max() << std::endl;
+                    stats_dict["max"] = stats.max();
                 } catch(const std::out_of_range& e) {}
                 try {
-                    std::cout << "  var: " << stats.variance() << std::endl;
+                    stats_dict["variance"] = stats.variance();
                 } catch(const std::out_of_range& e) {}
                 try {
-                    std::cout << "  stddev: " << stats.stddev() << std::endl;
+                    stats_dict["stddev"] = stats.stddev();
                 } catch(const std::out_of_range& e) {}
                 try {
-                    std::cout << "  skewness: " << stats.skewness() << std::endl;
+                    stats_dict["skewness"] = stats.skewness() ;
                 } catch(const std::out_of_range& e) {}
                 try {
-                    std::cout << "  kurtosis: " << stats.ex_kurtosis() << std::endl;
+                    stats_dict["kurtosis"] = stats.ex_kurtosis() ;
                 } catch(const std::out_of_range& e) {}
-                std::cout << std::endl;
             
+                summary_dict[id] = stats_dict;
             }
+            
         
         }
     }
