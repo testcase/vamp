@@ -27,6 +27,11 @@
 			<description>Initial buffer~ from which to read. </description>
 		</objarg>
 
+		<objarg name='plug-name' optional='1' type='symbol'>
+			<digest>Initial plug-in to load</digest>
+			<description>Initial plug-in to load. </description>
+		</objarg>
+
 	</objarglist>
 
 
@@ -34,14 +39,9 @@
 
 	<methodlist>
 
-		<method name='bang'>
-			<digest>Process buffer through plugin </digest>
-			<description>Process buffer through plugin </description>
-		</method>
-
-		<method name='plugins'>
-			<digest>List vamp plugins </digest>
-			<description>List vamp plugins </description>
+		<method name='getinfo'>
+			<digest>Get info </digest>
+			<description>Get info </description>
 		</method>
 
 		<method name='plug'>
@@ -49,24 +49,29 @@
 			<description>Load plugin by name </description>
 		</method>
 
-		<method name='getinfo'>
-			<digest>Get info </digest>
-			<description>Get info </description>
-		</method>
-
 		<method name='getprograms'>
 			<digest>Get Programs </digest>
 			<description>Get Programs </description>
 		</method>
 
-		<method name='getoutputs'>
-			<digest>Get outputs </digest>
-			<description>Get outputs </description>
+		<method name='stats'>
+			<digest>Get stats of features </digest>
+			<description>Get stats of features </description>
 		</method>
 
-		<method name='getparams'>
-			<digest>Get Params </digest>
-			<description>Get Params </description>
+		<method name='bang'>
+			<digest>Process buffer through plugin </digest>
+			<description>Process buffer through plugin </description>
+		</method>
+
+		<method name='dictionary'>
+			<digest></digest>
+			<description></description>
+		</method>
+
+		<method name='plugins'>
+			<digest>List vamp plugins </digest>
+			<description>List vamp plugins </description>
 		</method>
 
 		<method name='getparam'>
@@ -74,19 +79,14 @@
 			<description>Get parameter </description>
 		</method>
 
-		<method name='set'>
-			<digest>Choose a named buffer~ from which to read</digest>
-			<description>Choose a named buffer~ from which to read. </description>
-		</method>
-
 		<method name='setparam'>
 			<digest>Set parameter </digest>
 			<description>Set parameter </description>
 		</method>
 
-		<method name='summary'>
-			<digest>Get summary of features </digest>
-			<description>Get summary of features </description>
+		<method name='set'>
+			<digest>Choose a named buffer~ from which to read</digest>
+			<description>Choose a named buffer~ from which to read. </description>
 		</method>
 
 	</methodlist>
@@ -95,6 +95,16 @@
 	<!--ATTRIBUTES-->
 
 	<attributelist>
+
+		<attribute name='autoinfo' get='1' set='1' type='long' size='1' >
+			<digest>By default info it output when a new plugin is loaded</digest>
+			<description>By default info it output when a new plugin is loaded. You can turn this off. </description>
+		</attribute>
+
+		<attribute name='step_delta' get='1' set='1' type='float64' size='1' >
+			<digest>For stats </digest>
+			<description>For stats </description>
+		</attribute>
 
 		<attribute name='enable_summary' get='1' set='1' type='long' size='1' >
 			<digest>Enable statistical summary of features </digest>

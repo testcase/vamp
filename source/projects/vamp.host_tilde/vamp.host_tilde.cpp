@@ -91,6 +91,15 @@ public:
         }
     };
     
+    attribute<bool> autoinfo {this, "autoinfo", true,
+        
+        description {
+            "By default info it output when a new plugin is loaded. You can turn this off."
+        }
+    };
+    
+    
+    
     message<> dictionary { this, "dictionary",
         MIN_FUNCTION {
             c74::max::t_max_err err = c74::max::MAX_ERR_NONE;
@@ -108,6 +117,11 @@ public:
             c74::max::t_symbol **keys = NULL;
             
             err = c74::max::dictionary_getkeys_ordered( max_dict, &numkeys, &keys);
+            
+            if(m_feature_vec.empty()) {
+                cerr << "no features to summarize" << endl;
+                goto out;
+            }
             
             if(err !=  c74::max::MAX_ERR_NONE) {
                 cerr << "error parsing dictionary" << endl;
@@ -162,13 +176,15 @@ public:
             }
             
             
-            out:
+
+            
+            pluginfo.send("stats", "dictionary",summary_dict.name());
+            
+        out:
             if(keys) {
                 c74::max::dictionary_freekeys(max_dict, numkeys, keys);
             }
-            
-            
-            pluginfo.send("summary", "dictionary",summary_dict.name());
+        
             
             return {};
 
@@ -176,7 +192,7 @@ public:
     };
     
 
-    message<> summary {this, "summary", "Get summary of features",
+    message<> stats {this, "stats", "Get stats of features",
         
         MIN_FUNCTION {
             
@@ -210,7 +226,7 @@ public:
                 
             }
             
-            pluginfo.send("summary", "dictionary",summary_dict.name());
+            pluginfo.send("stats", "dictionary",summary_dict.name());
             
             return {};
         }
@@ -294,8 +310,12 @@ public:
             load_plug(plug);
 
             pluginfo.send("plug", m_plugid);
+            if(autoinfo) {
+                
+                getinfo();
+            }
             
-            getinfo();
+            m_feature_vec.clear();//clear feature
             
             return {};
         }
@@ -321,23 +341,7 @@ public:
         }
         
     };
-    
-    message<> getparams { this, "getparams", "Get Params",
-        MIN_FUNCTION {
-            if(m_plugin) {
 
-                dict param_dict{ symbol(true) };
-                from_params(param_dict);
-
-                pluginfo.send("params", "dictionary", param_dict.name());
-         
-            } else {
-                cerr << "no vamp plugin loaded" << endl;
-            }
-            
-            return {};
-        }
-    };
     
     message<> getinfo { this, "getinfo", "Get info",
         MIN_FUNCTION {
@@ -351,22 +355,19 @@ public:
                 infodict["maker"] = m_plugin->getMaker();
                 infodict["copyright"] = m_plugin->getCopyright();
                 infodict["version"] = m_plugin->getPluginVersion();
-                pluginfo.send("info", "dictionary", infodict.name());
-            } else {
-                cerr << "no vamp plugin loaded" << endl;
-            }
-            return {};
-        }
-    };
-
-    
-    message<> getoutputs { this, "getoutputs", "Get outputs",
-        MIN_FUNCTION {
-            if(m_plugin) {
+                
+                
+                dict param_dict{ symbol(true) };
+                from_params(param_dict);
+                infodict["params"] = param_dict;
+                
                 dict output_dict { symbol(true) };
                 from_outputs(output_dict);
-                pluginfo.send("outputs", "dictionary", output_dict.name());
+                infodict["outputs"] = output_dict;
                 
+                
+                
+                pluginfo.send("info", "dictionary", infodict.name());
             } else {
                 cerr << "no vamp plugin loaded" << endl;
             }
@@ -584,11 +585,7 @@ private:
             }
 
             m_plugin.reset(plugin);
-        
-
             m_plugid = plugname;
-
-            
             return;
     }
  
@@ -878,6 +875,9 @@ private:
                     }
                    
                     try {
+                        stats_dict["mean"] = stats.mean();
+                    }catch(const std::out_of_range& e) {}
+                    try {
                         stats_dict["min"] = stats.min();
                     }catch(const std::out_of_range& e) {}
                     try {
@@ -901,6 +901,9 @@ private:
                     for(auto& x : features) {
                         stats.add(x.values[0]);
                     }
+                    try {
+                        stats_dict["mean"] = stats.mean();
+                    }catch(const std::out_of_range& e) {}
                     
                     try {
                         stats_dict["min"] = stats.min();
@@ -1015,6 +1018,9 @@ private:
                     }
                 }
                 try {
+                    stats_dict["mean"] = stats.mean();
+                }catch(const std::out_of_range& e) {} 
+                try {
                     stats_dict["min"] = stats.min();
                 }catch(const std::out_of_range& e) {}
                 try {
@@ -1047,3 +1053,5 @@ private:
 
 
 MIN_EXTERNAL(vamp_host);
+
+
