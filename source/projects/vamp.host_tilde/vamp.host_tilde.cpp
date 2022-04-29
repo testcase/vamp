@@ -833,9 +833,13 @@ private:
         for(auto i=0;i<outputs.size();i++) {
             Plugin::OutputDescriptor desc = outputs[i];
             std::string id = desc.identifier;
-            if(desc.binCount == 1) {
+            if(desc.binCount > 0) {
                 std::vector<Plugin::Feature> features = m_feature_vec[id];
-                running_stats<float> stats;
+                std::vector<running_stats<float>> stats;
+                for(auto s=0;s<desc.binCount;s++) {
+                    stats.push_back(running_stats<float>());
+                }
+                
                 dict stats_dict { symbol(true) };
                 // this is more complicated than it first appears.
                 // i don't want to fiddle around with durations and calculating different segments
@@ -859,10 +863,15 @@ private:
                         }
 
                         if(rt <= f2.timestamp) {
-                            stats.add(f.values[0]);
+                            for(auto findex=0;findex<f.values.size();findex++) {
+                                stats[findex].add(f.values[findex]);
+                            }
                         } else {
                             fi++;
-                            stats.add(f2.values[0]);
+                            for(auto findex=0;findex<f2.values.size();findex++) {
+                                stats[findex].add(f2.values[findex]);
+                            }
+                            
                             if(fi == features.end()){
                                 if(tstep<b.length_in_seconds() && fi!=features.end()) {
                                     fi--;
@@ -873,58 +882,92 @@ private:
                             }
                         }
                     }
-                   
-                    try {
-                        stats_dict["mean"] = stats.mean();
-                    }catch(const std::out_of_range& e) {}
-                    try {
-                        stats_dict["min"] = stats.min();
-                    }catch(const std::out_of_range& e) {}
-                    try {
-                        stats_dict["max"] = stats.max();
-                    } catch(const std::out_of_range& e) {}
-                    try {
-                        stats_dict["variance"] = stats.variance();
-                    } catch(const std::out_of_range& e) {}
-                    try {
-                        stats_dict["stddev"] = stats.stddev();
-                    } catch(const std::out_of_range& e) {}
-                    try {
-                        stats_dict["skewness"] = stats.skewness() ;
-                    } catch(const std::out_of_range& e) {}
-                    try {
-                        stats_dict["kurtosis"] = stats.ex_kurtosis() ;
-                    } catch(const std::out_of_range& e) {}
+
                    
                 } else if (desc.sampleType == Plugin::OutputDescriptor::FixedSampleRate) {
-                    running_stats<float> stats;
-                    for(auto& x : features) {
-                        stats.add(x.values[0]);
-                    }
-                    try {
-                        stats_dict["mean"] = stats.mean();
-                    }catch(const std::out_of_range& e) {}
                     
-                    try {
-                        stats_dict["min"] = stats.min();
-                    }catch(const std::out_of_range& e) {}
-                    try {
-                        stats_dict["max"] = stats.max();
-                    } catch(const std::out_of_range& e) {}
-                    try {
-                        stats_dict["variance"] = stats.variance();
-                    } catch(const std::out_of_range& e) {}
-                    try {
-                        stats_dict["stddev"] = stats.stddev();
-                    } catch(const std::out_of_range& e) {}
-                    try {
-                        stats_dict["skewness"] = stats.skewness() ;
-                    } catch(const std::out_of_range& e) {}
-                    try {
-                        stats_dict["kurtosis"] = stats.ex_kurtosis() ;
-                    } catch(const std::out_of_range& e) {}
+                    for(auto& f : features) {
+                        
+                        for(auto findex=0;findex<f.values.size();findex++) {
+                            stats[findex].add(f.values[findex]);
+                        }
+                        
+                    }
                     
                 }
+                
+                
+                c74::max::t_object* s = static_cast<c74::max::t_object*>(stats_dict);
+                c74::max::t_dictionary* max_dict  = (c74::max::t_dictionary*)s;
+
+                try {
+                    atoms res;
+                    for(auto r=0;r<desc.binCount;r++) {
+                        res.push_back(stats[r].mean());
+                    }
+
+                    c74::max::dictionary_appendatoms(max_dict, symbol("mean"), res.size(), res.data());
+                }
+                catch(const std::out_of_range& e) {}
+                
+                try {
+                    
+                    atoms res;
+                    for(auto r=0;r<desc.binCount;r++) {
+                        res.push_back(stats[r].min());
+                    }
+                    c74::max::dictionary_appendatoms(max_dict, symbol("min"), res.size(), res.data());
+
+                }catch(const std::out_of_range& e) {}
+                
+                try {
+                    
+                    atoms res;
+                    for(auto r=0;r<desc.binCount;r++) {
+                        res.push_back(stats[r].max());
+                    }
+            
+                    c74::max::dictionary_appendatoms(max_dict, symbol("max"), res.size(), res.data());
+
+                } catch(const std::out_of_range& e) {}
+                
+                try {
+                    atoms res;
+                    for(auto r=0;r<desc.binCount;r++) {
+                        res.push_back(stats[r].variance());
+                    }
+            
+                    c74::max::dictionary_appendatoms(max_dict, symbol("variance"), res.size(), res.data());
+
+                } catch(const std::out_of_range& e) {}
+                
+                try {
+                    atoms res;
+                    for(auto r=0;r<desc.binCount;r++) {
+                        res.push_back(stats[r].stddev());
+                    }
+            
+                    c74::max::dictionary_appendatoms(max_dict, symbol("stddev"), res.size(), res.data());
+                
+                } catch(const std::out_of_range& e) {}
+                
+                try {
+                    atoms res;
+                    for(auto r=0;r<desc.binCount;r++) {
+                        res.push_back(stats[r].skewness());
+                    }
+            
+                    c74::max::dictionary_appendatoms(max_dict, symbol("skewness"), res.size(), res.data());
+                } catch(const std::out_of_range& e) {}
+                
+                try {
+                    atoms res;
+                    for(auto r=0;r<desc.binCount;r++) {
+                        res.push_back(stats[r].ex_kurtosis());
+                    }
+            
+                    c74::max::dictionary_appendatoms(max_dict, symbol("kurtosis"), res.size(), res.data());
+                } catch(const std::out_of_range& e) {}
                 
                 summary_dict[id] = stats_dict;
             }
@@ -958,27 +1001,35 @@ private:
         for(auto i=0;i<outputs.size();i++) {
             Plugin::OutputDescriptor desc = outputs[i];
             std::string id = desc.identifier;
-            // not going to summarize features with mulitple values
-            if(desc.binCount == 1) {
+
+            if(desc.binCount > 0) {
                 std::vector<Plugin::Feature> features = m_feature_vec[id];
-                running_stats<float> stats;
+                std::vector<running_stats<float>> stats;
+                for(auto s=0;s<desc.binCount;s++) {
+                    stats.push_back(running_stats<float>());
+                }
+            
                 dict stats_dict { symbol(true) };
-            // this is more complicated than it first appears.
-            // i don't want to fiddle around with durations and calculating different segments
-            // so going to pretend that the feature is sampled at fixed rate even if it is not to get stats
+                // this is more complicated than it first appears.
+                // i don't want to fiddle around with durations and calculating different segments
+                // so going to pretend that the feature is sampled at fixed rate even if it is not to get stats
+
                 if(features.size() == 1) {
-                    stats.add(features[0].values[0]);
+                    Plugin::Feature f = features[0];
+                    for(auto findex=0;findex<f.values.size();findex++) {
+                        stats[findex].add(f.values[findex]);
+                    }
                 } else {
                     std::vector<Plugin::Feature>::iterator fi = features.begin();
-                    
+
                     Plugin::Feature first = *fi;
-               
+
                     if( (first.timestamp == RealTime::fromSeconds(0.0)) && (start_time == 0.0)) {
                         ;
                     } else if (RealTime::fromSeconds(start_time) < first.timestamp){
                         ;
-                        
-                        
+
+
                     } else {
                         //find first time stamp after start time
                         while(first.timestamp <= RealTime::fromSeconds(start_time) ) {
@@ -987,9 +1038,9 @@ private:
                         }
                         //decrement to start at previous feature
                         fi--;
-              
+
                     }
-                    
+
                     for(double tstep=start_time;tstep<end_time;tstep+=step_delta) {
                         RealTime rt = RealTime::fromSeconds(tstep);
                         Plugin::Feature f = *fi;
@@ -1002,10 +1053,14 @@ private:
                         }
 
                         if(rt <= f2.timestamp) {
-                            stats.add(f.values[0]);
+                            for(auto findex=0;findex<f.values.size();findex++) {
+                                stats[findex].add(f.values[findex]);
+                            }
                         } else {
                             fi++;
-                            stats.add(f2.values[0]);
+                            for(auto findex=0;findex<f2.values.size();findex++) {
+                                stats[findex].add(f2.values[findex]);
+                            }
                             if(fi == features.end()){
                                 if(tstep<b.length_in_seconds() && fi!=features.end()) {
                                     fi--;
@@ -1016,37 +1071,79 @@ private:
                             }
                         }
                     }
+
                 }
+                c74::max::t_object* s = static_cast<c74::max::t_object*>(stats_dict);
+                c74::max::t_dictionary* max_dict  = (c74::max::t_dictionary*)s;
+
                 try {
-                    stats_dict["mean"] = stats.mean();
-                }catch(const std::out_of_range& e) {} 
+                    atoms res;
+                    for(auto r=0;r<desc.binCount;r++) {
+                        res.push_back(stats[r].mean());
+                    }
+                    c74::max::dictionary_appendatoms(max_dict, symbol("mean"), res.size(), res.data());
+                }
+                
+                catch(const std::out_of_range& e) {}
+                
                 try {
-                    stats_dict["min"] = stats.min();
+                    
+                    atoms res;
+                    for(auto r=0;r<desc.binCount;r++) {
+                        res.push_back(stats[r].min());
+                    }
+                    c74::max::dictionary_appendatoms(max_dict, symbol("min"), res.size(), res.data());
+
                 }catch(const std::out_of_range& e) {}
+                
                 try {
-                    stats_dict["max"] = stats.max();
+                    
+                    atoms res;
+                    for(auto r=0;r<desc.binCount;r++) {
+                        res.push_back(stats[r].max());
+                    }
+                    c74::max::dictionary_appendatoms(max_dict, symbol("max"), res.size(), res.data());
+
                 } catch(const std::out_of_range& e) {}
+                
                 try {
-                    stats_dict["variance"] = stats.variance();
+                    atoms res;
+                    for(auto r=0;r<desc.binCount;r++) {
+                        res.push_back(stats[r].variance());
+                    }
+                    c74::max::dictionary_appendatoms(max_dict, symbol("variance"), res.size(), res.data());
+
                 } catch(const std::out_of_range& e) {}
+                
                 try {
-                    stats_dict["stddev"] = stats.stddev();
+                    atoms res;
+                    for(auto r=0;r<desc.binCount;r++) {
+                        res.push_back(stats[r].stddev());
+                    }
+                    c74::max::dictionary_appendatoms(max_dict, symbol("stddev"), res.size(), res.data());
+                
                 } catch(const std::out_of_range& e) {}
+                
                 try {
-                    stats_dict["skewness"] = stats.skewness() ;
+                    atoms res;
+                    for(auto r=0;r<desc.binCount;r++) {
+                        res.push_back(stats[r].skewness());
+                    }
+                    c74::max::dictionary_appendatoms(max_dict, symbol("skewness"), res.size(), res.data());
                 } catch(const std::out_of_range& e) {}
+                
                 try {
-                    stats_dict["kurtosis"] = stats.ex_kurtosis() ;
+                    atoms res;
+                    for(auto r=0;r<desc.binCount;r++) {
+                        res.push_back(stats[r].ex_kurtosis());
+                    }
+                    c74::max::dictionary_appendatoms(max_dict, symbol("kurtosis"), res.size(), res.data());
                 } catch(const std::out_of_range& e) {}
-            
+                
                 summary_dict[id] = stats_dict;
             }
-            
-        
         }
     }
-    
-
 };
 
 
