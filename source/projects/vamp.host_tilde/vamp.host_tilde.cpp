@@ -41,14 +41,14 @@ enum Verbosity {
 
 class vamp_host : public object<vamp_host> {
 public:
-    MIN_DESCRIPTION	{"Post to the Max Console."};
-    MIN_TAGS		{"utilities"};
-    MIN_AUTHOR		{"Cycling '74"};
-    MIN_RELATED		{"print, jit.print, dict.print"};
+    MIN_DESCRIPTION	{"Load and use vamp plugins."};
+    MIN_TAGS		{"analysis"};
+    MIN_AUTHOR		{"Todd Ingalls"};
+    MIN_RELATED		{"vst~"};
 
-    inlet<>  input	{ this, "(bang) post greeting to the max console" };
-    outlet<> analysis	{ this, "(anything) output the message which is posted to the max console" };
-    outlet<> pluginfo    { this, "(anything) output the message which is posted to the max console" };
+    inlet<>  input	{ this, "configuration and processing input" };
+    outlet<> analysis	{ this, "(dictionary) output dictionary containing analysis of buffer" };
+    outlet<> pluginfo    { this, "outputs in response to queries or stats" };
 
     
     argument<symbol> m_name_arg {this, "buffer-name", "Initial buffer~ from which to read.",
@@ -94,7 +94,7 @@ public:
     attribute<bool> autoinfo {this, "autoinfo", true,
         
         description {
-            "By default info it output when a new plugin is loaded. You can turn this off."
+            "By default info is output when a new plugin is loaded. You can turn this off."
         }
     };
     
